@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hoteles Cauca</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Source+Sans+3:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header>
+  <div class="ancho">
+    <a class="marca" href="#">Hoteles Cauca</a>
+    <nav>
+      <a href="#hoteles">Hoteles</a>
+      <a href="#por-que">Por qué reservar</a>
+      <a class="boton" href="#">Mis reservas</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="ancho portada">
+    <div>
+      <h1>Duerme en la ciudad blanca.</h1>
+      <p class="intro">Busca hoteles en Popayán y otras ciudades del Cauca, mira qué habitaciones están libres en tus fechas y reserva en minutos.</p>
+
+      <form class="buscador" onsubmit="return false" aria-label="Buscar hotel">
+        <label>Ciudad
+          <select>
+            <option>Popayán</option>
+            <option>Silvia</option>
+            <option>Puracé</option>
+          </select>
+        </label>
+        <label>Huéspedes
+          <input type="number" min="1" value="2">
+        </label>
+        <label>Entrada
+          <input type="date">
+        </label>
+        <label>Salida
+          <input type="date">
+        </label>
+        <button class="boton" type="submit">Buscar habitaciones</button>
+      </form>
+    </div>
+
+    <svg class="fachada" viewBox="0 0 400 460" role="img" aria-label="Fachada colonial con arcos">
+      <rect x="0" y="0" width="400" height="460" rx="200" ry="200" fill="#E9ECF0"/>
+      <rect x="0" y="200" width="400" height="260" fill="#E9ECF0"/>
+      <!-- Muro -->
+      <rect x="40" y="170" width="320" height="250" fill="#FFFFFF"/>
+      <!-- Tejado -->
+      <path d="M24 170 L200 92 L376 170 Z" fill="#14233B"/>
+      <!-- Arcos -->
+      <g fill="#5B2A6E">
+        <path d="M70 420 V300 a40 40 0 0 1 80 0 V420 Z"/>
+        <path d="M160 420 V300 a40 40 0 0 1 80 0 V420 Z"/>
+        <path d="M250 420 V300 a40 40 0 0 1 80 0 V420 Z"/>
+      </g>
+      <!-- Ventanas -->
+      <g fill="#14233B">
+        <rect x="88" y="208" width="44" height="52" rx="22" ry="22"/>
+        <rect x="178" y="208" width="44" height="52" rx="22" ry="22"/>
+        <rect x="268" y="208" width="44" height="52" rx="22" ry="22"/>
+      </g>
+      <g fill="#C9A24B">
+        <circle cx="200" cy="140" r="9"/>
+      </g>
+      <rect x="40" y="420" width="320" height="10" fill="#14233B"/>
+    </svg>
+  </div>
+
+  <section id="hoteles">
+    <div class="ancho">
+      <div class="titulo">
+        <h2>Hoteles para este fin de semana</h2>
+        <a href="#">Ver todos los hoteles</a>
+      </div>
+      <div class="lista">
+        <article class="hotel">
+          <div class="foto f1" aria-hidden="true"></div>
+          <div>
+            <h3>Hotel Andino</h3>
+            <p>Popayán · Centro histórico · Wifi y desayuno</p>
+          </div>
+          <div class="precio"><strong>$180.000</strong>por noche</div>
+        </article>
+        <article class="hotel">
+          <div class="foto f2" aria-hidden="true"></div>
+          <div>
+            <h3>Casa del Río</h3>
+            <p>Popayán · Junto al puente del Humilladero · Terraza</p>
+          </div>
+          <div class="precio"><strong>$145.000</strong>por noche</div>
+        </article>
+        <article class="hotel">
+          <div class="foto f3" aria-hidden="true"></div>
+          <div>
+            <h3>Posada Guambiana</h3>
+            <p>Silvia · Cerca del mercado · Desayuno incluido</p>
+          </div>
+          <div class="precio"><strong>$120.000</strong>por noche</div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="por-que" class="razones">
+    <div class="ancho">
+      <div class="titulo"><h2>Reserva sin sorpresas</h2></div>
+      <div class="razones-grid">
+        <div>
+          <h3>Fechas realmente libres</h3>
+          <p>Solo ves habitaciones disponibles para tus fechas, con el precio total de la estadía.</p>
+        </div>
+        <div>
+          <h3>Habitación apartada 15 minutos</h3>
+          <p>Cuando eliges una habitación, nadie más puede tomarla mientras terminas tu reserva.</p>
+        </div>
+        <div>
+          <h3>Hoteles administrados por su dueño</h3>
+          <p>Cada hotel gestiona sus propias habitaciones y precios, siempre al día.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="ancho">
+    <span>Hoteles Cauca</span>
+    <span>Proyecto académico · Unicomfacauca</span>
+  </div>
+</footer>
+
+</body>
+</html>

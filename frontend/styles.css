@@ -1,0 +1,94 @@
+:root {
+  --cal: #F4F6F5;      /* muro encalado */
+  --tinta: #14233B;    /* azul tinta */
+  --pasion: #5B2A6E;   /* morado de Semana Santa */
+  --oro: #C9A24B;
+  --linea: #D7DCDD;
+  --suave: #5A667A;
+}
+* { box-sizing: border-box; margin: 0; }
+body {
+  background: var(--cal);
+  color: var(--tinta);
+  font: 400 1.0625rem/1.55 "Source Sans 3", system-ui, sans-serif;
+}
+h1, h2, h3, .marca { font-family: "Bricolage Grotesque", system-ui, sans-serif; }
+a { color: inherit; }
+:focus-visible { outline: 3px solid var(--oro); outline-offset: 2px; }
+.ancho { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+/* ---------- Barra superior ---------- */
+header .ancho { display: flex; align-items: center; justify-content: space-between; padding-top: 22px; padding-bottom: 22px; }
+.marca { font-weight: 800; font-size: 1.35rem; text-decoration: none; letter-spacing: -0.02em; }
+nav { display: flex; gap: 28px; align-items: center; }
+nav a { text-decoration: none; font-weight: 600; }
+nav a:hover { color: var(--pasion); }
+.boton {
+  display: inline-block; border: 0; cursor: pointer;
+  background: var(--pasion); color: #fff; font: 600 1rem "Source Sans 3", sans-serif;
+  padding: 12px 22px; border-radius: 999px; text-decoration: none;
+}
+.boton:hover { background: #4a2059; }
+nav .boton { padding: 9px 18px; }
+
+/* ---------- Portada ---------- */
+.portada { display: grid; grid-template-columns: 1.15fr 1fr; gap: 56px; align-items: center; padding-top: 40px; padding-bottom: 72px; }
+.portada h1 { font-size: clamp(2.5rem, 5.6vw, 4.5rem); line-height: 1.02; letter-spacing: -0.035em; font-weight: 800; }
+.portada p.intro { margin-top: 20px; max-width: 46ch; color: var(--suave); font-size: 1.15rem; }
+
+.buscador {
+  margin-top: 36px; background: #fff; border: 1px solid var(--linea); border-radius: 18px;
+  padding: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+  box-shadow: 0 18px 40px -24px rgba(20, 35, 59, .35);
+}
+.buscador label { display: grid; gap: 4px; font-size: .9rem; font-weight: 600; color: var(--suave); }
+.buscador input, .buscador select {
+  font: 400 1rem "Source Sans 3", sans-serif; color: var(--tinta);
+  padding: 10px 12px; border: 1px solid var(--linea); border-radius: 10px; background: var(--cal);
+}
+.buscador .boton { grid-column: 1 / -1; padding: 14px; border-radius: 12px; font-size: 1.05rem; }
+
+/* Fachada de arcos (elemento principal de la portada) */
+.fachada { width: 100%; height: auto; display: block; }
+
+/* ---------- Hoteles destacados ---------- */
+section { padding: 64px 0; }
+.titulo { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+.titulo h2 { font-size: clamp(1.8rem, 3.4vw, 2.5rem); letter-spacing: -0.03em; line-height: 1.1; }
+.titulo a { font-weight: 600; color: var(--pasion); }
+
+.lista { border-top: 1px solid var(--tinta); }
+.hotel {
+  display: grid; grid-template-columns: 120px 1fr auto; gap: 28px; align-items: center;
+  padding: 22px 0; border-bottom: 1px solid var(--linea);
+}
+.foto { height: 84px; border-radius: 60px 60px 6px 6px; }
+.f1 { background: linear-gradient(160deg, #E8E2D4, #B9B3C7); }
+.f2 { background: linear-gradient(160deg, #DDE5EA, #8FA3BF); }
+.f3 { background: linear-gradient(160deg, #EADFE8, #A78BB5); }
+.hotel h3 { font-size: 1.35rem; letter-spacing: -0.02em; }
+.hotel p { color: var(--suave); }
+.precio { text-align: right; font-weight: 600; }
+.precio strong { display: block; font: 800 1.5rem "Bricolage Grotesque", sans-serif; letter-spacing: -0.02em; }
+
+/* ---------- Por qué reservar ---------- */
+.razones { background: var(--tinta); color: var(--cal); }
+.razones .titulo h2 { color: #fff; }
+.razones-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; }
+.razones h3 { font-size: 1.2rem; margin-bottom: 8px; color: var(--oro); }
+.razones p { color: #C5CEDB; }
+
+/* ---------- Pie ---------- */
+footer { padding: 36px 0 48px; color: var(--suave); font-size: .95rem; }
+footer .ancho { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+
+/* ---------- Movil ---------- */
+@media (max-width: 860px) {
+  .portada { grid-template-columns: 1fr; gap: 32px; }
+  .fachada { max-width: 420px; margin: 0 auto; }
+  .razones-grid { grid-template-columns: 1fr; gap: 28px; }
+  .hotel { grid-template-columns: 84px 1fr; }
+  .hotel .precio { grid-column: 2; text-align: left; }
+  nav a:not(.boton) { display: none; }
+}
+@media (max-width: 480px) { .buscador { grid-template-columns: 1fr; } }

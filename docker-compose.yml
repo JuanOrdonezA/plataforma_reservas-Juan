@@ -1,0 +1,81 @@
+services:
+
+  #gateway:
+     #image: nginx:1.27-alpine
+     #ports:
+     # - "8080:80"
+     #depends_on:
+     #  - usuarios
+     #  - espacios
+
+  # ---------- FRONTEND----------
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+
+  # ---------- SERVICIO DE USUARIOS ----------
+  usuarios:
+    build: ./usuarios
+    ports:
+      - "5001:5000"
+    env_file:
+      - .env
+    environment:
+      DB_HOST: mysql_usuarios
+      DB_NAME: usuarios_db
+    depends_on:
+      mysql_usuarios:
+        condition: service_healthy
+
+  # ---------- SERVICIO DE ESPACIOS (hoteles y habitaciones) ----------
+  espacios:
+    build: ./espacios
+    ports:
+      - "5002:5000"
+    env_file:
+      - .env
+    environment:
+      DB_HOST: mysql_espacios
+      DB_NAME: espacios_db
+    depends_on:
+      mysql_espacios:
+        condition: service_healthy
+      usuarios:
+        condition: service_started
+
+  # ---------- BASES DE DATOS (una por servicio) ----------
+  mysql_usuarios:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_DATABASE: usuarios_db
+    ports:
+      - "3307:3306"
+    volumes:
+      - datos_usuarios:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p${DB_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mysql_espacios:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_DATABASE: espacios_db
+    ports:
+      - "3308:3306"
+    volumes:
+      - datos_espacios:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p${DB_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  datos_usuarios:
+  datos_espacios:
+
