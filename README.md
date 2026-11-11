@@ -34,7 +34,7 @@ Microservicios en Flask (Python), cada uno con su propia base de datos MySQL, or
 - Comunicación entre servicios por HTTP: al crear un hotel, **espacios** consulta a **usuarios** para comprobar que el administrador (`admin_id`) existe.
 - Los puertos entre paréntesis son los que se publican en tu máquina. Dentro de la red de Docker, los servicios escuchan en el 5000 y MySQL en el 3306.
 - El API Gateway (nginx) está en el `docker-compose.yml` pero **comentado** por ahora.
-- Por ahora no hay login ni manejo de roles.
+- Hay login básico (`POST /login` en usuarios, contraseñas con hash) pero **sin tokens ni roles**: la página guarda el usuario en el navegador y los servicios no verifican quién llama.
 
 ```
 hoteles/
@@ -53,7 +53,7 @@ hoteles/
 | --- | --- | --- | --- |
 | usuarios (:5001) | Registrar y administrar las personas del sistema | Usuarios: nombre, apellido, correo, teléfono, contraseña (con hash) y estado de la cuenta | Responde las consultas de espacios. No llama a ningún servicio. |
 | espacios (:5002) | Administrar hoteles y habitaciones, calcular disponibilidad por fechas y bloquear habitaciones durante 15 minutos | Hoteles, habitaciones y ocupaciones (bloqueos y fechas confirmadas) | Consulta a usuarios (HTTP) para validar el administrador de un hotel. |
-| frontend (:3000) | Mostrar la página de inicio (solo visual por ahora) | Página estática | Ninguna todavía. |
+| frontend (:3000) | Buscar disponibilidad, reservar (apartar 15 min y confirmar), ver mis reservas y el estado de los servicios | Página estática (`index.html`, `styles.css`, `app.js`); las reservas del usuario se guardan en el navegador | Llama desde el navegador a usuarios (:5001) y espacios (:5002). |
 
 
 
@@ -67,7 +67,20 @@ hoteles/
 | Información enviada | El `admin_id` (id del usuario) en la ruta, al crear un hotel con `POST /hoteles` |
 | Información recibida | `200` con el usuario (id, nombre, apellido, correo, teléfono, estado) o `404` si no existe |
 
-Si el usuario no existe, espacios responde `400`; si usuarios no responde, responde `503`. Esta es la única comunicación entre servicios por ahora; la siguiente la traerá el servicio de Reservas.
+Si el usuario no existe, espacios responde `400`. Esta es la única comunicación entre servicios por ahora; la siguiente la traerá el servicio de Reservas.
+
+### Resiliencia: timeout y circuit breaker
+
+La llamada de espacios a usuarios usa **timeout** y un **circuit breaker** (`pybreaker`):
+
+| Situación | Respuesta de espacios |
+| --- | --- |
+| Usuarios tarda más de `USUARIOS_TIMEOUT` segundos | `504` |
+| Usuarios no se puede alcanzar | `503` |
+| Usuarios responde 5xx | `502` (cuenta como fallo del circuito) |
+| Circuito abierto (muchos fallos seguidos) | `503` inmediato, sin llamar a usuarios |
+
+Tras `CB_MAX_FALLOS` fallos seguidos el circuito pasa a `OPEN`; después de `CB_RECUPERACION` segundos queda `HALF-OPEN` y deja pasar una llamada de prueba (si funciona vuelve a `CLOSED`). El estado se consulta en `GET http://localhost:5002/circuito/usuarios`. Para probarlo: `docker compose stop usuarios` y crear hoteles (`POST /hoteles`) varias veces.
 
 ## Endpoints
 
@@ -83,6 +96,24 @@ Los servicios implementan los métodos REST principales: GET (consultar), GET po
 | PUT | /usuarios/{id} | Actualizar usuario | JSON con nombre, apellido y/o telefono | Confirmación, o 404 |
 | PATCH | /usuarios/{id}/estado | Activar o desactivar la cuenta | JSON: `{"estado":"activa"}` o `"inactiva"` | Confirmación, o 404 |
 | DELETE | /usuarios/{id} | Eliminar usuario | ID del usuario | Confirmación, o 404 |
+
+| POST | /login | Iniciar sesión | JSON: correo, password | Usuario (sin contraseña), 401 si los datos son incorrectos, 403 si la cuenta está inactiva |
+
+### Servicio Reservas (`http://localhost:5003`)
+
+Una reserva une a un usuario con una habitación y unas fechas. Para crearla, reservas valida el usuario en **usuarios**, consulta la habitación y su precio en **espacios** y aparta las fechas (bloqueo de 15 minutos). Ambas llamadas usan timeout y circuit breaker (uno por servicio).
+
+| Método | Endpoint | Descripción | Entrada | Respuesta |
+| --- | --- | --- | --- | --- |
+| GET | /reservas | Consultar reservas | Opcional: `?usuario_id=` y `?estado=` | Lista de reservas |
+| GET | /reservas/{id} | Consultar una reserva | ID de la reserva | Reserva, o 404 |
+| POST | /reservas | Crear reserva (queda `pendiente`) | JSON: usuario_id, habitacion_id, entrada, salida, huespedes (opcional) | Id y total (201); 400 usuario o fechas inválidas; 409 habitación ocupada |
+| POST | /reservas/{id}/confirmar | Confirmar la reserva pendiente | ID de la reserva | Confirmación, o 409 si ya venció |
+| POST | /reservas/{id}/cancelar | Cancelar y liberar las fechas | ID de la reserva | Confirmación, o 409 si ya estaba cancelada o vencida |
+| PUT | /reservas/{id} | Cambiar las fechas | JSON: entrada, salida | Confirmación y nuevo total, o 409 si se cruzan |
+| GET | /circuito | Estado de los circuit breakers hacia usuarios y espacios | Ninguna | `CLOSED`, `OPEN` o `HALF-OPEN` por servicio |
+
+Estados: `pendiente` (vence a los 15 minutos), `confirmada`, `cancelada` y `expirada`. Los errores de comunicación devuelven 503, 504 o 502, igual que en espacios.
 
 ### Servicio Espacios (`http://localhost:5002`)
 
@@ -124,6 +155,7 @@ Los servicios implementan los métodos REST principales: GET (consultar), GET po
 | Servicio | Base de datos utilizada | Tablas principales |
 | --- | --- | --- |
 | usuarios | `usuarios_db` (MySQL 8.0, contenedor `mysql_usuarios`, puerto local 3307) | `usuarios` |
+| reservas | `reservas_db` (MySQL 8.0, contenedor `mysql_reservas`, puerto local 3309) | `reservas` (el script está en `reservas/init.sql`) |
 | espacios | `espacios_db` (MySQL 8.0, contenedor `mysql_espacios`, puerto local 3308) | `hoteles`, `habitaciones`, `ocupaciones` |
 
 Cada servicio tiene su propio MySQL 8.0 con volumen persistente (`datos_usuarios`, `datos_espacios`). Docker crea las bases de datos vacías; **las tablas se crean manualmente** (por ejemplo desde un cliente MySQL en `localhost:3307` y `localhost:3308`, usuario `root`).
@@ -196,6 +228,11 @@ Se definen en el archivo `.env` y los servicios las leen con `env_file`. `DB_HOS
 | DB_PASSWORD | root | Contraseña de MySQL (también es la contraseña root del contenedor) |
 | DB_PORT | 3306 | Puerto interno de MySQL |
 | USUARIOS_URL | http://usuarios:5000 | Dirección del servicio de Usuarios, usada por Espacios |
+| USUARIOS_TIMEOUT | 2 (opcional) | Segundos máximos de espera a Usuarios (en espacios) |
+| SERVICIOS_TIMEOUT | 2 (opcional) | Segundos máximos de espera a Usuarios y Espacios (en reservas) |
+| ESPACIOS_URL | http://espacios:5000 | Dirección de Espacios, usada por Reservas (la fija el compose) |
+| CB_MAX_FALLOS | 3 (opcional) | Fallos seguidos para abrir el circuito |
+| CB_RECUPERACION | 30 (opcional) | Segundos con el circuito abierto antes de probar de nuevo |
 | DB_HOST | mysql_usuarios / mysql_espacios | Definida en el compose por servicio |
 | DB_NAME | usuarios_db / espacios_db | Definida en el compose por servicio |
 
@@ -212,6 +249,7 @@ docker compose up -d --build
 #    Conectarse desde la terminal (contraseña: root):
 docker compose exec mysql_usuarios mysql -uroot -proot usuarios_db
 docker compose exec mysql_espacios mysql -uroot -proot espacios_db
+docker compose exec -T mysql_reservas mysql -uroot -proot reservas_db < reservas/init.sql
 #    O, si tienes el cliente mysql instalado en tu máquina:
 mysql -h 127.0.0.1 -P 3307 -uroot -proot usuarios_db
 mysql -h 127.0.0.1 -P 3308 -uroot -proot espacios_db
@@ -220,6 +258,7 @@ mysql -h 127.0.0.1 -P 3308 -uroot -proot espacios_db
 #    Página:   http://localhost:3000
 #    Usuarios: http://localhost:5001/usuarios
 #    Espacios: http://localhost:5002/hoteles
+#    Reservas: http://localhost:5003/reservas
 ```
 
 Comandos útiles:

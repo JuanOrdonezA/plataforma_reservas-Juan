@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hoteles Cauca</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Source+Sans+3:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header>
+  <div class="ancho">
+    <a class="marca" href="#">Hoteles Cauca</a>
+    <nav>
+      <a href="#hoteles">Hoteles</a>
+      <a href="#por-que">Por qué reservar</a>
+      <button class="enlace" type="button" id="btn-sesion">Ingresar</button>
+      <button class="boton" type="button" id="abrir-reservas">Mis reservas</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="ancho portada">
+    <div>
+      <h1>Duerme en la ciudad blanca.</h1>
+      <p class="intro">Busca hoteles en Popayán y otras ciudades del Cauca, mira qué habitaciones están libres en tus fechas y reserva en minutos.</p>
+
+      <form class="buscador" id="buscador" aria-label="Buscar hotel">
+        <label>Ciudad
+          <select id="ciudad"><option value="">Todas las ciudades</option></select>
+        </label>
+        <label>Huéspedes
+          <input type="number" id="huespedes" min="1" value="2" required>
+        </label>
+        <label>Entrada
+          <input type="date" id="entrada" required>
+        </label>
+        <label>Salida
+          <input type="date" id="salida" required>
+        </label>
+        <button class="boton" type="submit">Buscar habitaciones</button>
+      </form>
+    </div>
+
+    <svg class="fachada" viewBox="0 0 400 460" role="img" aria-label="Fachada colonial con arcos">
+      <rect x="0" y="0" width="400" height="460" rx="200" ry="200" fill="#E9ECF0"/>
+      <rect x="0" y="200" width="400" height="260" fill="#E9ECF0"/>
+      <!-- Muro -->
+      <rect x="40" y="170" width="320" height="250" fill="#FFFFFF"/>
+      <!-- Tejado -->
+      <path d="M24 170 L200 92 L376 170 Z" fill="#14233B"/>
+      <!-- Arcos -->
+      <g fill="#5B2A6E">
+        <path d="M70 420 V300 a40 40 0 0 1 80 0 V420 Z"/>
+        <path d="M160 420 V300 a40 40 0 0 1 80 0 V420 Z"/>
+        <path d="M250 420 V300 a40 40 0 0 1 80 0 V420 Z"/>
+      </g>
+      <!-- Ventanas -->
+      <g fill="#14233B">
+        <rect x="88" y="208" width="44" height="52" rx="22" ry="22"/>
+        <rect x="178" y="208" width="44" height="52" rx="22" ry="22"/>
+        <rect x="268" y="208" width="44" height="52" rx="22" ry="22"/>
+      </g>
+      <g fill="#C9A24B">
+        <circle cx="200" cy="140" r="9"/>
+      </g>
+      <rect x="40" y="420" width="320" height="10" fill="#14233B"/>
+    </svg>
+  </div>
+
+  <!-- Resultados de la búsqueda (se llena con GET /hoteles/disponibles) -->
+  <section id="resultados" hidden>
+    <div class="ancho">
+      <div class="titulo">
+        <h2 id="resultados-titulo">Habitaciones libres</h2>
+        <a href="#hoteles" id="limpiar-resultados">Ver todos los hoteles</a>
+      </div>
+      <div id="resultados-lista"></div>
+    </div>
+  </section>
+
+  <section id="hoteles">
+    <div class="ancho">
+      <div class="titulo">
+        <h2>Nuestros hoteles</h2>
+        <a href="#buscador">Buscar por fechas</a>
+      </div>
+      <div class="lista" id="lista-hoteles">
+        <p class="vacio">Cargando hoteles…</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="por-que" class="razones">
+    <div class="ancho">
+      <div class="titulo"><h2>Reserva sin sorpresas</h2></div>
+      <div class="razones-grid">
+        <div>
+          <h3>Fechas realmente libres</h3>
+          <p>Solo ves habitaciones disponibles para tus fechas, con el precio total de la estadía.</p>
+        </div>
+        <div>
+          <h3>Habitación apartada 15 minutos</h3>
+          <p>Cuando eliges una habitación, nadie más puede tomarla mientras terminas tu reserva.</p>
+        </div>
+        <div>
+          <h3>Hoteles administrados por su dueño</h3>
+          <p>Cada hotel gestiona sus propias habitaciones y precios, siempre al día.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="ancho">
+    <span>Hoteles Cauca · Proyecto académico · Unicomfacauca</span>
+    <div class="estado" id="estado" aria-live="polite" title="Estado de los servicios">
+      <span class="chip" id="chip-usuarios">Usuarios: …</span>
+      <span class="chip" id="chip-espacios">Espacios: …</span>
+      <span class="chip" id="chip-reservas">Reservas: …</span>
+      <span class="chip" id="chip-circuito">Circuito: …</span>
+    </div>
+  </div>
+</footer>
+
+<!-- Reservar una habitación -->
+<dialog id="dlg-reserva">
+  <button class="cerrar" type="button" data-cerrar aria-label="Cerrar">×</button>
+
+  <!-- Paso 1: datos del huésped -->
+  <form id="paso-datos" method="dialog">
+    <h2>Reservar habitación</h2>
+    <div class="resumen" id="resumen"></div>
+    <p class="nota">Reservas como <strong id="r-huesped"></strong>. Tendrás 15 minutos para confirmar.</p>
+    <p class="error" id="error-datos" role="alert" hidden></p>
+    <button class="boton ancho-boton" type="submit" id="btn-apartar">Apartar por 15 minutos</button>
+  </form>
+
+  <!-- Paso 2: habitación apartada, falta confirmar -->
+  <div id="paso-confirmar" hidden>
+    <h2>Habitación apartada</h2>
+    <div class="resumen" id="resumen2"></div>
+    <div class="reloj"><span id="reloj">15:00</span><small>para confirmar tu reserva</small></div>
+    <p class="error" id="error-confirmar" role="alert" hidden></p>
+    <button class="boton ancho-boton" type="button" id="btn-confirmar">Confirmar reserva</button>
+    <button class="enlace" type="button" id="btn-liberar">Cancelar y liberar las fechas</button>
+  </div>
+
+  <!-- Paso 3: listo -->
+  <div id="paso-listo" hidden>
+    <h2>¡Reserva confirmada!</h2>
+    <div class="resumen" id="resumen3"></div>
+    <p class="codigo">Código <strong id="codigo"></strong></p>
+    <button class="boton ancho-boton" type="button" data-cerrar>Listo</button>
+  </div>
+
+  <!-- Paso 4: no se pudo -->
+  <div id="paso-fallo" hidden>
+    <h2 id="fallo-titulo">No se pudo reservar</h2>
+    <p id="fallo-texto" class="nota"></p>
+    <button class="boton ancho-boton" type="button" data-cerrar>Cerrar</button>
+  </div>
+</dialog>
+
+<!-- Ingresar / crear cuenta -->
+<dialog id="dlg-auth">
+  <button class="cerrar" type="button" data-cerrar aria-label="Cerrar">×</button>
+
+  <form id="form-login">
+    <h2>Ingresar</h2>
+    <div class="campos">
+      <label class="ancho-completo">Correo<input id="l-correo" type="email" autocomplete="username" required></label>
+      <label class="ancho-completo">Contraseña<input id="l-password" type="password" autocomplete="current-password" required></label>
+    </div>
+    <p class="error" id="error-login" role="alert" hidden></p>
+    <button class="boton ancho-boton" type="submit">Ingresar</button>
+    <button class="enlace" type="button" id="ir-registro">¿No tienes cuenta? Créala</button>
+  </form>
+
+  <form id="form-registro" hidden>
+    <h2>Crear cuenta</h2>
+    <div class="campos">
+      <label>Nombre<input id="g-nombre" autocomplete="given-name" required></label>
+      <label>Apellido<input id="g-apellido" autocomplete="family-name" required></label>
+      <label class="ancho-completo">Correo<input id="g-correo" type="email" autocomplete="username" required></label>
+      <label>Teléfono<input id="g-telefono" type="tel" autocomplete="tel"></label>
+      <label>Contraseña<input id="g-password" type="password" minlength="6" autocomplete="new-password" required></label>
+    </div>
+    <p class="error" id="error-registro" role="alert" hidden></p>
+    <button class="boton ancho-boton" type="submit">Crear cuenta</button>
+    <button class="enlace" type="button" id="ir-login">Ya tengo cuenta</button>
+  </form>
+</dialog>
+
+<!-- Mis reservas -->
+<dialog id="dlg-mis-reservas">
+  <button class="cerrar" type="button" data-cerrar aria-label="Cerrar">×</button>
+  <h2>Mis reservas</h2>
+  <div id="mis-reservas"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

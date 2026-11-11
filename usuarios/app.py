@@ -1,12 +1,22 @@
 from flask import Flask, jsonify, request
-from werkzeug.security import generate_password_hash
+from werkzeug.security import generate_password_hash, check_password_hash
 import mysql.connector
 from database import conectar
 
 app = Flask(__name__)
 
+
+# Permite que la pagina (otro puerto) llame a este servicio desde el navegador
+@app.after_request
+def permitir_navegador(respuesta):
+    respuesta.headers["Access-Control-Allow-Origin"] = "*"
+    respuesta.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    respuesta.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    return respuesta
+
 # Columnas que se devuelven (nunca se devuelve la contrasena)
-COLUMNAS = "id, nombre, apellido, correo, telefono, estado"
+COLUMNAS = "id, nombre, apellido, correo, telefono, rol, estado"
+ROLES = ["cliente", "agencia", "admin_hotel", "admin_sistema"]
 
 
 # Listar usuarios
@@ -48,19 +58,24 @@ def crear():
     if faltantes:
         return jsonify({"Mensaje": "Faltan campos", "campos": faltantes}), 400
 
+    rol = nuevoUsuario.get("rol", "cliente")
+    if rol not in ROLES:
+        return jsonify({"Mensaje": "Rol no valido", "roles": ROLES}), 400
+
     conexion = conectar()
     cursor = conexion.cursor(dictionary=True)
     sql = """
         INSERT INTO usuarios
-        (nombre, apellido, correo, telefono, password)
-        VALUES (%s, %s, %s, %s, %s)
+        (nombre, apellido, correo, telefono, password, rol)
+        VALUES (%s, %s, %s, %s, %s, %s)
     """
     valores = (
         nuevoUsuario["nombre"],
         nuevoUsuario["apellido"],
-        nuevoUsuario["correo"],
+        nuevoUsuario["correo"].strip().lower(),
         nuevoUsuario.get("telefono"),
-        generate_password_hash(nuevoUsuario["password"])
+        generate_password_hash(nuevoUsuario["password"]),
+        rol
     )
     try:
         cursor.execute(sql, valores)
@@ -79,16 +94,19 @@ def crear():
 @app.route("/usuarios/<int:id>", methods=["PUT"])
 def actualizar(id):
     datos = request.json
+    if datos.get("rol") is not None and datos["rol"] not in ROLES:
+        return jsonify({"Mensaje": "Rol no valido", "roles": ROLES}), 400
     conexion = conectar()
     cursor = conexion.cursor(dictionary=True)
     sql = """
         UPDATE usuarios
         SET nombre = COALESCE(%s, nombre),
             apellido = COALESCE(%s, apellido),
-            telefono = COALESCE(%s, telefono)
+            telefono = COALESCE(%s, telefono),
+            rol = COALESCE(%s, rol)
         WHERE id = %s
     """
-    valores = (datos.get("nombre"), datos.get("apellido"), datos.get("telefono"), id)
+    valores = (datos.get("nombre"), datos.get("apellido"), datos.get("telefono"), datos.get("rol"), id)
     cursor.execute(sql, valores)
     conexion.commit()
     filas_afectadas = cursor.rowcount
@@ -123,6 +141,31 @@ def actualizar_campo(id, campo, valor):
     cursor.close()
     conexion.close()
     return jsonify({"Mensaje": f"{campo} actualizado", campo: valor})
+
+
+# Iniciar sesion: comprueba el correo y la contrasena (que se guarda con hash)
+# body: {"correo": "juan@mail.com", "password": "123456"}
+@app.route("/login", methods=["POST"])
+def login():
+    datos = request.json or {}
+    correo = (datos.get("correo") or "").strip().lower()
+    password = datos.get("password")
+    if not correo or not password:
+        return jsonify({"Mensaje": "Faltan campos", "campos": ["correo", "password"]}), 400
+
+    conexion = conectar()
+    cursor = conexion.cursor(dictionary=True)
+    cursor.execute(f"SELECT {COLUMNAS}, password FROM usuarios WHERE correo = %s", (correo,))
+    usuario = cursor.fetchone()
+    cursor.close()
+    conexion.close()
+
+    # Mismo mensaje si el correo no existe o la contrasena es incorrecta
+    if usuario is None or not check_password_hash(usuario.pop("password"), password):
+        return jsonify({"Mensaje": "Correo o contrasena incorrectos"}), 401
+    if usuario["estado"] != "activa":
+        return jsonify({"Mensaje": "La cuenta esta inactiva"}), 403
+    return jsonify({"Mensaje": "Bienvenido", "usuario": usuario})
 
 
 # Eliminar un usuario

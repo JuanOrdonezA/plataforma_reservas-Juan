@@ -1,12 +1,30 @@
 from flask import Flask, jsonify, request
 from datetime import date, datetime
 from decimal import Decimal
-import requests, os
+import requests, os, pybreaker
 from database import conectar
 
 url_usuarios = os.getenv("USUARIOS_URL")
 
 app = Flask(__name__)
+
+# Circuit breaker para las llamadas al servicio de Usuarios:
+# tras CB_MAX_FALLOS fallos seguidos se "abre" y responde 503 sin llamar a Usuarios
+# durante CB_RECUPERACION segundos; despues deja pasar una llamada de prueba.
+circuito_usuarios = pybreaker.CircuitBreaker(
+    fail_max=int(os.getenv("CB_MAX_FALLOS", "3")),
+    reset_timeout=int(os.getenv("CB_RECUPERACION", "30")),
+    throw_new_error_on_trip=False
+)
+
+
+# Permite que la pagina (otro puerto) llame a este servicio desde el navegador
+@app.after_request
+def permitir_navegador(respuesta):
+    respuesta.headers["Access-Control-Allow-Origin"] = "*"
+    respuesta.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    respuesta.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    return respuesta
 
 MINUTOS_BLOQUEO = 15
 
@@ -45,11 +63,22 @@ def leer_fechas(entrada, salida):
 
 
 # Pregunta al servicio de Usuarios si el administrador existe
+# (con timeout y circuit breaker: si Usuarios falla o tarda, no se deja esperando al cliente)
 def validar_admin(admin_id):
+    tiempo_maximo = float(os.getenv("USUARIOS_TIMEOUT", "2"))
     try:
-        respuesta = requests.get(f"{url_usuarios}/usuarios/{admin_id}", timeout=3)
-    except requests.exceptions.RequestException:
-        return "No se pudo consultar el servicio de usuarios", 503
+        with circuito_usuarios.calling():
+            respuesta = requests.get(f"{url_usuarios}/usuarios/{admin_id}", timeout=tiempo_maximo)
+            if respuesta.status_code >= 500:
+                respuesta.raise_for_status()  # los 5xx cuentan como fallo del circuito
+    except pybreaker.CircuitBreakerError:
+        return "Circuito abierto: el servicio de usuarios no esta disponible", 503
+    except requests.exceptions.Timeout:
+        return "El servicio de usuarios tardo demasiado en responder", 504
+    except requests.exceptions.ConnectionError:
+        return "No se pudo establecer comunicacion con el servicio de usuarios", 503
+    except requests.exceptions.HTTPError:
+        return "Error en el servicio de usuarios", 502
     if respuesta.status_code == 404:
         return "El administrador no existe", 400
     if respuesta.status_code != 200:
@@ -57,18 +86,33 @@ def validar_admin(admin_id):
     return None, None
 
 
+# Estado del circuit breaker hacia Usuarios (CLOSED, OPEN o HALF-OPEN)
+@app.route("/circuito/usuarios")
+def estado_circuito():
+    return jsonify({
+        "estado": circuito_usuarios.current_state.upper(),
+        "fallos_consecutivos": circuito_usuarios.fail_counter,
+        "umbral_fallos": circuito_usuarios.fail_max,
+        "periodo_recuperacion": circuito_usuarios.reset_timeout
+    })
+
+
 # ---------------- HOTELES ----------------
 
-# Listar hoteles (opcional: /hoteles?ciudad=Popayan)
+# Listar hoteles activos (opcional: /hoteles?ciudad=Popayan). Con ?todos=1 incluye los inactivos (administrador)
 @app.route("/hoteles")
 def listar_hoteles():
     ciudad = request.args.get("ciudad")
+    todos = request.args.get("todos") == "1"
     conexion = conectar()
     cursor = conexion.cursor(dictionary=True)
-    if ciudad:
-        cursor.execute("SELECT * FROM hoteles WHERE estado = 'activo' AND ciudad = %s", (ciudad,))
-    else:
-        cursor.execute("SELECT * FROM hoteles WHERE estado = 'activo'")
+    cursor.execute(
+        """
+        SELECT * FROM hoteles
+        WHERE (%s OR estado = 'activo') AND (%s IS NULL OR ciudad = %s)
+        """,
+        (todos, ciudad, ciudad)
+    )
     hoteles = cursor.fetchall()
     cursor.close()
     conexion.close()
