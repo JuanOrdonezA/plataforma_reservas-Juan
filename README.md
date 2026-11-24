@@ -159,13 +159,6 @@ Estados de una reserva: `pendiente` (vence a los 15 minutos), `confirmada`, `can
 
 Cada MySQL guarda sus datos en un volumen de Docker (`datos_usuarios`, `datos_espacios`, `datos_disponibilidad`, `datos_reservas`). Los datos sobreviven a `docker compose down`, a `stop`/`start` y a recrear los contenedores. Solo se pierden con `docker compose down -v`.
 
-Prueba realizada:
-
-```bash
-docker compose up -d --force-recreate usuarios espacios disponibilidad reservas
-# el usuario, el hotel y la reserva creados antes siguen respondiendo 200
-```
-
 ## 7. Comunicación entre servicios
 
 Dentro de Docker Compose cada servicio se alcanza por su **nombre** en la red de Docker Compose (por ejemplo `http://espacios:5000`). Las direcciones están en `.env` (`USUARIOS_URL`, `ESPACIOS_URL`, `DISPONIBILIDAD_URL`, `RESERVAS_URL`) y cada `app.py` las lee con `os.getenv`.
@@ -297,30 +290,18 @@ Las credenciales van en `.env` (no se sube a GitHub; plantilla en `.env.example`
 Requisitos: Docker y Docker Compose.
 
 ```bash
-# 1. Variables
-cp .env.example .env
 
-# 2. Construir y levantar todo
+# 1. Construir y levantar todo
 docker compose up -d --build
 docker compose ps
-
-# Las tablas se crean solas la primera vez (scripts de base_de_datos/).
 ```
-
-Si los volúmenes ya existían de antes, MySQL no vuelve a ejecutar los scripts. En ese caso se pueden cargar a mano (Git Bash / Linux / Mac; contraseña: la de `DB_PASSWORD`):
+Las tablas se crean ejecutando el codigo de los .sql, conectandose mediante estos comando
 
 ```bash
-docker compose exec  mysql_usuarios       mysql -uroot -proot usuarios_db       < base_de_datos/usuarios.sql
-docker compose exec  mysql_espacios       mysql -uroot -proot espacios_db       < base_de_datos/espacios.sql
-docker compose exec  mysql_reservas       mysql -uroot -proot reservas_db       < base_de_datos/reservas.sql
-docker compose exec  mysql_disponibilidad mysql -uroot -proot disponibilidad_db < base_de_datos/disponibilidad.sql
-```
-
-En PowerShell (no acepta `<`):
-
-```powershell
-Get-Content base_de_datos/usuarios.sql -Raw | docker compose exec -T mysql_usuarios mysql -uroot -proot usuarios_db
-# igual para espacios, reservas y disponibilidad
+docker compose exec  mysql_usuarios       mysql -uroot -proot usuarios_db       
+docker compose exec  mysql_espacios       mysql -uroot -proot espacios_db       
+docker compose exec  mysql_reservas       mysql -uroot -proot reservas_db       
+docker compose exec  mysql_disponibilidad mysql -uroot -proot disponibilidad_db 
 ```
 
 Acceso:
@@ -379,6 +360,3 @@ Matriz de verificación, con todas las pruebas hechas a través del gateway (`ht
 **Pendiente / limitaciones conocidas**
 
 - No hay autenticación por token: `POST /login` valida la contraseña, pero los servicios no verifican quién hace cada llamada.
-- Si se elimina una habitación, sus ocupaciones en Disponibilidad no se borran solas (ya no aparecen en las búsquedas).
-- La base `espacios_db` de instalaciones anteriores puede conservar una tabla `ocupaciones` antigua que ya no se usa.
-- Los bloqueos vencidos se ignoran pero no se borran de la tabla `ocupaciones`.
