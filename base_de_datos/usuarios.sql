@@ -10,10 +10,10 @@ CREATE TABLE IF NOT EXISTS usuarios (
     creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Usuarios de prueba
+-- Usuarios de prueba (INSERT IGNORE: el correo es unico, asi que re-ejecutar no duplica)
 -- admin@hoteles.com / admin123    (admin_sistema)
 -- hotel@hoteles.com / hotel123    (admin_hotel)
-INSERT INTO usuarios (nombre, apellido, correo, telefono, password, rol) VALUES
+INSERT IGNORE INTO usuarios (nombre, apellido, correo, telefono, password, rol) VALUES
 ('Admin', 'Sistema', 'admin@hoteles.com', '3000000000',
  'scrypt:32768:8:1$o1rvoaUSTZCRkDII$0e48ce4342484e22d958e9558c719dc723f4513288d54397b82d67e4fd0941dc0853c92536b19cc65403a6838b1eed7242cac478646d4366a52716c6e91481a6',
  'admin_sistema'),

@@ -1,7 +1,6 @@
 // Panel de administración: CRUD de usuarios, hoteles, habitaciones, ocupaciones y reservas
-const API_USUARIOS = `http://${location.hostname}:5001`;
-const API_ESPACIOS = `http://${location.hostname}:5002`;
-const API_RESERVAS = `http://${location.hostname}:5003`;
+// Todas las peticiones pasan por el API Gateway (puerto 5000), que las reenvia al servicio que corresponde
+const API_GATEWAY = `http://${location.hostname}:5000`;
 const TIEMPO_MAXIMO_MS = 5000;
 
 const $ = (id) => document.getElementById(id);
@@ -63,7 +62,7 @@ async function iniciarSesion(evento) {
   evento.preventDefault();
   const error = $("error-login");
   error.hidden = true;
-  const r = await api(API_USUARIOS, "/login", {
+  const r = await api(API_GATEWAY, "/login", {
     method: "POST",
     body: { correo: $("l-correo").value, password: $("l-password").value }
   });
@@ -100,10 +99,10 @@ const db = { usuarios: [], hoteles: [], habitaciones: [], ocupaciones: [], reser
 // Carga todo de los tres servicios. Devuelve la lista de servicios que no respondieron.
 async function cargarTodo() {
   const [u, h, o, rv] = await Promise.all([
-    api(API_USUARIOS, "/usuarios"),
-    api(API_ESPACIOS, "/hoteles?todos=1"),
-    api(API_ESPACIOS, "/ocupaciones"),
-    api(API_RESERVAS, "/reservas")
+    api(API_GATEWAY, "/usuarios"),
+    api(API_GATEWAY, "/hoteles?todos=1"),
+    api(API_GATEWAY, "/ocupaciones"),
+    api(API_GATEWAY, "/reservas")
   ]);
   db.usuarios = u.ok ? u.datos : [];
   db.hoteles = h.ok ? h.datos : [];
@@ -111,12 +110,13 @@ async function cargarTodo() {
   db.reservas = rv.ok ? rv.datos : [];
 
   // Las habitaciones vienen dentro de cada hotel
-  const detalles = await Promise.all(db.hoteles.map((x) => api(API_ESPACIOS, `/hoteles/${x.id}`)));
+  const detalles = await Promise.all(db.hoteles.map((x) => api(API_GATEWAY, `/hoteles/${x.id}`)));
   db.habitaciones = detalles.flatMap((d) => (d.ok ? d.datos.habitaciones : []));
 
   const fallos = [];
   if (!u.ok) fallos.push("Usuarios");
-  if (!h.ok || !o.ok) fallos.push("Espacios");
+  if (!h.ok) fallos.push("Espacios");
+  if (!o.ok) fallos.push("Disponibilidad");
   if (!rv.ok) fallos.push("Reservas");
   return fallos;
 }
@@ -230,16 +230,17 @@ const secciones = {
   resumen: {
     titulo: "Resumen",
     async render() {
-      const [usuarios, espacios, reservas, cEspacios, cReservas] = await Promise.all([
-        api(API_USUARIOS, "/usuarios"),
-        api(API_ESPACIOS, "/hoteles"),
-        api(API_RESERVAS, "/reservas?usuario_id=0"),
-        api(API_ESPACIOS, "/circuito/usuarios"),
-        api(API_RESERVAS, "/circuito")
+      const [salud, cEspacios, cDisponibilidad, cReservas] = await Promise.all([
+        api(API_GATEWAY, "/salud"),
+        api(API_GATEWAY, "/circuito/espacios"),
+        api(API_GATEWAY, "/circuito/disponibilidad"),
+        api(API_GATEWAY, "/circuito/reservas")
       ]);
-      const servicio = (nombre, r, puerto) => `
-        <div class="servicio"><strong class="punto ${r.ok ? "bien" : "mal"}">${nombre}</strong>
-        <span>${r.ok ? "En línea" : esc(mensajeDe(r))}</span><small>Puerto ${puerto}</small></div>`;
+      const servicio = (nombre, clave, puerto) => {
+        const estado = salud.ok ? salud.datos[clave] : "Sin respuesta del gateway";
+        return `<div class="servicio"><strong class="punto ${estado === "en linea" ? "bien" : "mal"}">${nombre}</strong>
+          <span>${esc(estado)}</span><small>Red interna (${puerto}) · vía gateway :5000</small></div>`;
+      };
       const circuito = (nombre, c) => {
         const estado = c?.estado || "SIN DATOS";
         const nivel = estado === "CLOSED" ? "bien" : estado === "OPEN" ? "mal" : "medio";
@@ -259,13 +260,18 @@ const secciones = {
         </div>
         <h2 class="sub">Servicios</h2>
         <div class="servicios">
-          ${servicio("Usuarios", usuarios, 5001)}${servicio("Espacios", espacios, 5002)}${servicio("Reservas", reservas, 5003)}
+          <div class="servicio"><strong class="punto ${salud.ok ? "bien" : "mal"}">API Gateway</strong>
+            <span>${salud.ok ? "en linea" : "sin respuesta"}</span><small>Puerto 5000 · puerta de entrada</small></div>
+          ${servicio("Usuarios", "usuarios", "usuarios:5000")}${servicio("Espacios", "espacios", "espacios:5000")}
+          ${servicio("Disponibilidad", "disponibilidad", "disponibilidad:5000")}${servicio("Reservas", "reservas", "reservas:5000")}
         </div>
         <h2 class="sub" style="margin-top:26px">Circuit breakers</h2>
         <div class="servicios">
-          ${circuito("Espacios → Usuarios", cEspacios.ok ? cEspacios.datos : null)}
+          ${circuito("Espacios → Usuarios", cEspacios.ok ? cEspacios.datos.usuarios : null)}
+          ${circuito("Disponibilidad → Espacios", cDisponibilidad.ok ? cDisponibilidad.datos.espacios : null)}
           ${circuito("Reservas → Usuarios", cReservas.ok ? cReservas.datos.usuarios : null)}
           ${circuito("Reservas → Espacios", cReservas.ok ? cReservas.datos.espacios : null)}
+          ${circuito("Reservas → Disponibilidad", cReservas.ok ? cReservas.datos.disponibilidad : null)}
         </div>`;
     }
   },
@@ -299,24 +305,24 @@ const secciones = {
     },
     crear() {
       abrirForm({ titulo: "Nuevo usuario", campos: this.campos(false), valores: { rol: "cliente" },
-        enviar: (v) => api(API_USUARIOS, "/usuarios", { method: "POST", body: v }) });
+        enviar: (v) => api(API_GATEWAY, "/usuarios", { method: "POST", body: v }) });
     },
     acciones: {
       editar(id) {
         const u = usuarioPorId(id);
         abrirForm({ titulo: `Editar usuario #${id}`, campos: secciones.usuarios.campos(true), valores: u,
-          enviar: (v) => api(API_USUARIOS, `/usuarios/${id}`, { method: "PUT", body: v }) });
+          enviar: (v) => api(API_GATEWAY, `/usuarios/${id}`, { method: "PUT", body: v }) });
       },
       estado(id) {
         const nuevo = usuarioPorId(id).estado === "activa" ? "inactiva" : "activa";
-        ejecutar(api(API_USUARIOS, `/usuarios/${id}/estado`, { method: "PATCH", body: { estado: nuevo } }));
+        ejecutar(api(API_GATEWAY, `/usuarios/${id}/estado`, { method: "PATCH", body: { estado: nuevo } }));
       },
       eliminar(id) {
         const hoteles = db.hoteles.filter((h) => h.admin_id === id).length;
         const reservas = db.reservas.filter((r) => r.usuario_id === id).length;
         let aviso = `¿Eliminar a ${nombreUsuario(id)}?`;
         if (hoteles || reservas) aviso += `\n\nAtención: administra ${hoteles} hotel(es) y tiene ${reservas} reserva(s). Esos registros quedarán apuntando a un usuario que ya no existe.`;
-        if (confirm(aviso)) ejecutar(api(API_USUARIOS, `/usuarios/${id}`, { method: "DELETE" }));
+        if (confirm(aviso)) ejecutar(api(API_GATEWAY, `/usuarios/${id}`, { method: "DELETE" }));
       }
     }
   },
@@ -357,7 +363,7 @@ const secciones = {
             opciones: opciones(admins, (u) => u.id, (u) => `${u.nombre} ${u.apellido} (${u.rol})`) }),
           ...this.camposComunes()
         ],
-        enviar: (v) => api(API_ESPACIOS, "/hoteles", { method: "POST", body: v })
+        enviar: (v) => api(API_GATEWAY, "/hoteles", { method: "POST", body: v })
       });
     },
     acciones: {
@@ -366,18 +372,18 @@ const secciones = {
           titulo: `Editar hotel #${id}`, valores: hotelPorId(id),
           campos: [...secciones.hoteles.camposComunes(),
             campo("estado", "Estado", "select", { requerido: true, opciones: [["activo", "activo"], ["inactivo", "inactivo"]] })],
-          enviar: (v) => api(API_ESPACIOS, `/hoteles/${id}`, { method: "PUT", body: v })
+          enviar: (v) => api(API_GATEWAY, `/hoteles/${id}`, { method: "PUT", body: v })
         });
       },
       estado(id) {
         const nuevo = hotelPorId(id).estado === "activo" ? "inactivo" : "activo";
-        ejecutar(api(API_ESPACIOS, `/hoteles/${id}`, { method: "PUT", body: { estado: nuevo } }));
+        ejecutar(api(API_GATEWAY, `/hoteles/${id}`, { method: "PUT", body: { estado: nuevo } }));
       },
       habitaciones(id) { filtroHotel = String(id); irA("habitaciones"); },
       eliminar(id) {
         const n = db.habitaciones.filter((x) => x.hotel_id === id).length;
         if (confirm(`¿Eliminar "${hotelPorId(id).nombre}"?\n\nTambién se borran sus ${n} habitación(es) y sus ocupaciones.`)) {
-          ejecutar(api(API_ESPACIOS, `/hoteles/${id}`, { method: "DELETE" }));
+          ejecutar(api(API_GATEWAY, `/hoteles/${id}`, { method: "DELETE" }));
         }
       }
     }
@@ -423,7 +429,7 @@ const secciones = {
         ],
         enviar: (v) => {
           const { hotel_id, ...cuerpo } = v;
-          return api(API_ESPACIOS, `/hoteles/${hotel_id}/habitaciones`, { method: "POST", body: cuerpo });
+          return api(API_GATEWAY, `/hoteles/${hotel_id}/habitaciones`, { method: "POST", body: cuerpo });
         }
       });
     },
@@ -433,12 +439,12 @@ const secciones = {
           titulo: `Editar habitación #${id}`, valores: habitacionPorId(id),
           campos: [...secciones.habitaciones.camposComunes(),
             campo("estado", "Estado", "select", { requerido: true, opciones: [["activa", "activa"], ["mantenimiento", "mantenimiento"]] })],
-          enviar: (v) => api(API_ESPACIOS, `/habitaciones/${id}`, { method: "PUT", body: v })
+          enviar: (v) => api(API_GATEWAY, `/habitaciones/${id}`, { method: "PUT", body: v })
         });
       },
       eliminar(id) {
         if (confirm(`¿Eliminar la habitación ${etiquetaHabitacion(id)}?\n\nTambién se borran sus ocupaciones.`)) {
-          ejecutar(api(API_ESPACIOS, `/habitaciones/${id}`, { method: "DELETE" }));
+          ejecutar(api(API_GATEWAY, `/habitaciones/${id}`, { method: "DELETE" }));
         }
       }
     }
@@ -472,7 +478,7 @@ const secciones = {
           campo("salida", "Salida", "date", { requerido: true }),
           { ayuda: "El bloqueo dura 15 minutos y después se libera solo si no se confirma." }
         ],
-        enviar: (v) => api(API_ESPACIOS, "/ocupaciones", { method: "POST", body: v })
+        enviar: (v) => api(API_GATEWAY, "/ocupaciones", { method: "POST", body: v })
       });
     },
     acciones: {
@@ -480,7 +486,7 @@ const secciones = {
         abrirForm({
           titulo: `Confirmar ocupación #${id}`, boton: "Confirmar",
           campos: [campo("reserva_id", "Número de reserva (opcional)", "number", { min: 1, completo: true })],
-          enviar: (v) => api(API_ESPACIOS, `/ocupaciones/${id}/confirmar`, { method: "POST", body: v })
+          enviar: (v) => api(API_GATEWAY, `/ocupaciones/${id}/confirmar`, { method: "POST", body: v })
         });
       },
       editar(id) {
@@ -489,14 +495,14 @@ const secciones = {
           titulo: `Cambiar fechas de la ocupación #${id}`,
           valores: { entrada: o.fecha_entrada, salida: o.fecha_salida },
           campos: [campo("entrada", "Entrada", "date", { requerido: true }), campo("salida", "Salida", "date", { requerido: true })],
-          enviar: (v) => api(API_ESPACIOS, `/ocupaciones/${id}`, { method: "PUT", body: v })
+          enviar: (v) => api(API_GATEWAY, `/ocupaciones/${id}`, { method: "PUT", body: v })
         });
       },
       liberar(id) {
         const o = db.ocupaciones.find((x) => x.id === id);
         let aviso = `¿Liberar la ocupación #${id}? Las fechas quedarán disponibles.`;
         if (o.reserva_id) aviso += `\n\nAtención: está ligada a la reserva #${o.reserva_id}. Para anularla mejor cancela la reserva desde la sección Reservas.`;
-        if (confirm(aviso)) ejecutar(api(API_ESPACIOS, `/ocupaciones/${id}`, { method: "DELETE" }));
+        if (confirm(aviso)) ejecutar(api(API_GATEWAY, `/ocupaciones/${id}`, { method: "DELETE" }));
       }
     }
   },
@@ -539,23 +545,23 @@ const secciones = {
           { ayuda: "Queda pendiente: tiene 15 minutos para confirmarla." }
         ],
         valores: { huespedes: 1 },
-        enviar: (v) => api(API_RESERVAS, "/reservas", { method: "POST", body: v })
+        enviar: (v) => api(API_GATEWAY, "/reservas", { method: "POST", body: v })
       });
     },
     acciones: {
-      confirmar(id) { ejecutar(api(API_RESERVAS, `/reservas/${id}/confirmar`, { method: "POST" })); },
+      confirmar(id) { ejecutar(api(API_GATEWAY, `/reservas/${id}/confirmar`, { method: "POST" })); },
       editar(id) {
         const r = db.reservas.find((x) => x.id === id);
         abrirForm({
           titulo: `Cambiar fechas de la reserva #${id}`,
           valores: { entrada: r.fecha_entrada, salida: r.fecha_salida },
           campos: [campo("entrada", "Entrada", "date", { requerido: true }), campo("salida", "Salida", "date", { requerido: true })],
-          enviar: (v) => api(API_RESERVAS, `/reservas/${id}`, { method: "PUT", body: v })
+          enviar: (v) => api(API_GATEWAY, `/reservas/${id}`, { method: "PUT", body: v })
         });
       },
       cancelar(id) {
         if (confirm(`¿Cancelar la reserva #${id}? Las fechas quedarán libres.`)) {
-          ejecutar(api(API_RESERVAS, `/reservas/${id}/cancelar`, { method: "POST" }));
+          ejecutar(api(API_GATEWAY, `/reservas/${id}/cancelar`, { method: "POST" }));
         }
       }
     }

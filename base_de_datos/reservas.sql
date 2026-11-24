@@ -1,5 +1,5 @@
 -- Una reserva liga a un usuario (servicio Usuarios) con una habitacion (servicio Espacios).
--- ocupacion_id es el bloqueo/ocupacion que Espacios guarda para esas fechas.
+-- ocupacion_id es el bloqueo/ocupacion que Disponibilidad guarda para esas fechas.
 -- pendiente  = habitacion apartada, falta confirmar (vence en expira_en)
 -- confirmada = reserva confirmada
 -- cancelada  = cancelada por el cliente

@@ -1,4 +1,5 @@
 from flask import Flask, jsonify, request
+import time
 from datetime import date, datetime
 from decimal import Decimal
 import requests, os, pybreaker
@@ -6,22 +7,17 @@ from database import conectar
 
 url_usuarios = os.getenv("USUARIOS_URL")
 url_espacios = os.getenv("ESPACIOS_URL")
-TIEMPO_MAXIMO = float(os.getenv("SERVICIOS_TIMEOUT", "2"))
-MINUTOS_BLOQUEO = 15  # debe coincidir con el bloqueo del servicio de Espacios
+url_disponibilidad = os.getenv("DISPONIBILIDAD_URL")
+TIEMPO_MAXIMO = float(os.getenv("SERVICIOS_TIMEOUT", "2"))  # timeout hacia Usuarios, Espacios y Disponibilidad (valor en .env)
+MINUTOS_BLOQUEO = 15  # debe coincidir con el bloqueo del servicio de Disponibilidad
 
 app = Flask(__name__)
 
-
-# Un circuit breaker por servicio del que dependemos
-def nuevo_circuito():
-    return pybreaker.CircuitBreaker(
-        fail_max=int(os.getenv("CB_MAX_FALLOS", "3")),
-        reset_timeout=int(os.getenv("CB_RECUPERACION", "30")),
-        throw_new_error_on_trip=False
-    )
-
-
-circuitos = {"usuarios": nuevo_circuito(), "espacios": nuevo_circuito()}
+# Un circuit breaker por cada servicio del que dependemos
+circuito_usuarios = pybreaker.CircuitBreaker(fail_max=int(os.getenv("CB_MAX_FALLOS", "3")), reset_timeout=int(os.getenv("CB_RECUPERACION", "30")), throw_new_error_on_trip=False)
+circuito_espacios = pybreaker.CircuitBreaker(fail_max=int(os.getenv("CB_MAX_FALLOS", "3")), reset_timeout=int(os.getenv("CB_RECUPERACION", "30")), throw_new_error_on_trip=False)
+circuito_disponibilidad = pybreaker.CircuitBreaker(fail_max=int(os.getenv("CB_MAX_FALLOS", "3")), reset_timeout=int(os.getenv("CB_RECUPERACION", "30")), throw_new_error_on_trip=False)
+circuitos = {"usuarios": circuito_usuarios, "espacios": circuito_espacios, "disponibilidad": circuito_disponibilidad}
 
 
 # Permite que la pagina (otro puerto) llame a este servicio desde el navegador
@@ -46,9 +42,25 @@ def responder_error(e):
     return jsonify({"Mensaje": e.mensaje}), e.codigo
 
 
+# Respuestas JSON para errores generales (ruta inexistente, metodo no permitido, error interno)
+@app.errorhandler(404)
+def no_encontrado(e):
+    return jsonify({"Mensaje": "Ruta no encontrada"}), 404
+
+
+@app.errorhandler(405)
+def metodo_no_permitido(e):
+    return jsonify({"Mensaje": "Metodo HTTP no permitido en esta ruta"}), 405
+
+
+@app.errorhandler(500)
+def error_interno(e):
+    return jsonify({"Mensaje": "Error interno del servicio"}), 500
+
+
 # Llama a otro servicio con timeout y circuit breaker.
 def llamar(servicio, metodo, ruta, **kwargs):
-    base = url_usuarios if servicio == "usuarios" else url_espacios
+    base = {"usuarios": url_usuarios, "espacios": url_espacios, "disponibilidad": url_disponibilidad}[servicio]
     try:
         with circuitos[servicio].calling():
             respuesta = requests.request(metodo, base + ruta, timeout=TIEMPO_MAXIMO, **kwargs)
@@ -67,9 +79,9 @@ def llamar(servicio, metodo, ruta, **kwargs):
 
 def mensaje_de(respuesta):
     try:
-        return respuesta.json().get("Mensaje", "Error en el servicio de espacios")
+        return respuesta.json().get("Mensaje", "Error en el servicio consultado")
     except ValueError:
-        return "Error en el servicio de espacios"
+        return "Error en el servicio consultado"
 
 
 # Convierte fechas y decimales para poder devolverlos en JSON
@@ -134,7 +146,7 @@ def buscar(id):
     return jsonify(limpiar(reserva))
 
 
-# Crear una reserva: valida el usuario, aparta la habitacion en Espacios y guarda la reserva
+# Crear una reserva: valida el usuario y la habitacion, aparta las fechas en Disponibilidad y guarda la reserva
 # body: {"usuario_id": 1, "habitacion_id": 1, "entrada": "2026-12-20", "salida": "2026-12-23", "huespedes": 2}
 @app.route("/reservas", methods=["POST"])
 def crear():
@@ -167,8 +179,8 @@ def crear():
     if huespedes > habitacion["capacidad"]:
         return jsonify({"Mensaje": f"La habitacion admite maximo {habitacion['capacidad']} huespedes"}), 400
 
-    # 3. Precio total (Espacios tambien valida las fechas y responde 400 si son invalidas)
-    r = llamar("espacios", "GET", f"/habitaciones/{habitacion['id']}/disponibilidad",
+    # 3. Precio total (Disponibilidad tambien valida las fechas y responde 400 si son invalidas)
+    r = llamar("disponibilidad", "GET", f"/disponibilidad/habitaciones/{habitacion['id']}",
                params={"entrada": datos["entrada"], "salida": datos["salida"]})
     if r.status_code != 200:
         return jsonify({"Mensaje": mensaje_de(r)}), r.status_code
@@ -176,8 +188,8 @@ def crear():
     if not disponibilidad["disponible"]:
         return jsonify({"Mensaje": "La habitacion ya esta ocupada en esas fechas"}), 409
 
-    # 4. Apartar la habitacion (Espacios evita las reservas duplicadas)
-    r = llamar("espacios", "POST", "/ocupaciones", json={
+    # 4. Apartar la habitacion (Disponibilidad evita las reservas duplicadas)
+    r = llamar("disponibilidad", "POST", "/ocupaciones", json={
         "habitacion_id": habitacion["id"], "entrada": datos["entrada"], "salida": datos["salida"]
     })
     if r.status_code != 201:
@@ -203,7 +215,7 @@ def crear():
     except Exception:
         cerrar(cursor, conexion)
         try:
-            llamar("espacios", "DELETE", f"/ocupaciones/{ocupacion_id}")
+            llamar("disponibilidad", "DELETE", f"/ocupaciones/{ocupacion_id}")
         except ErrorServicio:
             pass  # el bloqueo vence solo en 15 minutos
         return jsonify({"Mensaje": "No se pudo guardar la reserva"}), 500
@@ -232,11 +244,11 @@ def confirmar(id):
         return jsonify({"Mensaje": f"La reserva esta {reserva['estado']}, no se puede confirmar"}), 409
 
     try:
-        r = llamar("espacios", "POST", f"/ocupaciones/{reserva['ocupacion_id']}/confirmar", json={"reserva_id": id})
+        r = llamar("disponibilidad", "POST", f"/ocupaciones/{reserva['ocupacion_id']}/confirmar", json={"reserva_id": id})
     except ErrorServicio:
         cerrar(cursor, conexion)
         raise
-    if r.status_code == 404:  # el bloqueo vencio en Espacios
+    if r.status_code == 404:  # el bloqueo vencio en Disponibilidad
         cursor.execute("UPDATE reservas SET estado = 'expirada' WHERE id = %s", (id,))
         conexion.commit()
         cerrar(cursor, conexion)
@@ -265,7 +277,7 @@ def cancelar(id):
         return jsonify({"Mensaje": f"La reserva ya esta {reserva['estado']}"}), 409
 
     try:
-        r = llamar("espacios", "DELETE", f"/ocupaciones/{reserva['ocupacion_id']}")
+        r = llamar("disponibilidad", "DELETE", f"/ocupaciones/{reserva['ocupacion_id']}")
     except ErrorServicio:
         cerrar(cursor, conexion)
         raise
@@ -298,8 +310,8 @@ def cambiar_fechas(id):
         return jsonify({"Mensaje": f"La reserva esta {reserva['estado']}, no se puede modificar"}), 409
 
     try:
-        # Espacios valida las fechas y que no se crucen con otras ocupaciones
-        r = llamar("espacios", "PUT", f"/ocupaciones/{reserva['ocupacion_id']}",
+        # Disponibilidad valida las fechas y que no se crucen con otras ocupaciones
+        r = llamar("disponibilidad", "PUT", f"/ocupaciones/{reserva['ocupacion_id']}",
                    json={"entrada": datos["entrada"], "salida": datos["salida"]})
         if r.status_code != 200:
             cerrar(cursor, conexion)
@@ -323,17 +335,41 @@ def cambiar_fechas(id):
     return jsonify({"Mensaje": "Reserva actualizada", "total": total})
 
 
+# Eliminar una reserva: libera sus fechas en Disponibilidad y borra el registro
+@app.route("/reservas/<int:id>", methods=["DELETE"])
+def eliminar(id):
+    conexion = conectar()
+    cursor = conexion.cursor(dictionary=True)
+    reserva = traer_reserva(cursor, conexion, id)
+    if reserva is None:
+        cerrar(cursor, conexion)
+        return jsonify({"Mensaje": "Reserva no encontrada"}), 404
+
+    if reserva["estado"] != "cancelada":  # una cancelada ya libero sus fechas
+        try:
+            r = llamar("disponibilidad", "DELETE", f"/ocupaciones/{reserva['ocupacion_id']}")
+        except ErrorServicio:
+            cerrar(cursor, conexion)
+            raise
+        if r.status_code not in (200, 404):  # 404: las fechas ya estaban libres
+            cerrar(cursor, conexion)
+            return jsonify({"Mensaje": mensaje_de(r)}), 502
+
+    cursor.execute("DELETE FROM reservas WHERE id = %s", (id,))
+    conexion.commit()
+    cerrar(cursor, conexion)
+    return jsonify({"Mensaje": "Reserva eliminada", "id": id})
+
+
 # Estado de los circuit breakers (CLOSED, OPEN o HALF-OPEN)
 @app.route("/circuito")
 def estado_circuitos():
-    return jsonify({
-        nombre: {
-            "estado": c.current_state.upper(),
-            "fallos_consecutivos": c.fail_counter,
-            "umbral_fallos": c.fail_max,
-            "periodo_recuperacion": c.reset_timeout
-        } for nombre, c in circuitos.items()
-    })
+    return jsonify({nombre: {
+        "estado": circuito.current_state.upper(),
+        "fallos_consecutivos": circuito.fail_counter,
+        "umbral_fallos": circuito.fail_max,
+        "periodo_recuperacion": circuito.reset_timeout
+    } for nombre, circuito in circuitos.items()})
 
 
 app.run(host="0.0.0.0", port=5000)

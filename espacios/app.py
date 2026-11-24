@@ -1,21 +1,18 @@
 from flask import Flask, jsonify, request
+import time
 from datetime import date, datetime
 from decimal import Decimal
 import requests, os, pybreaker
 from database import conectar
 
 url_usuarios = os.getenv("USUARIOS_URL")
+TIEMPO_MAXIMO = float(os.getenv("USUARIOS_TIMEOUT", "2")) 
 
 app = Flask(__name__)
+#time.sleep(3)
 
-# Circuit breaker para las llamadas al servicio de Usuarios:
-# tras CB_MAX_FALLOS fallos seguidos se "abre" y responde 503 sin llamar a Usuarios
-# durante CB_RECUPERACION segundos; despues deja pasar una llamada de prueba.
-circuito_usuarios = pybreaker.CircuitBreaker(
-    fail_max=int(os.getenv("CB_MAX_FALLOS", "3")),
-    reset_timeout=int(os.getenv("CB_RECUPERACION", "30")),
-    throw_new_error_on_trip=False
-)
+# Circuit breaker hacia Usuarios
+circuito_usuarios = pybreaker.CircuitBreaker(fail_max=int(os.getenv("CB_MAX_FALLOS", "3")), reset_timeout=int(os.getenv("CB_RECUPERACION", "30")), throw_new_error_on_trip=False)
 
 
 # Permite que la pagina (otro puerto) llame a este servicio desde el navegador
@@ -25,15 +22,6 @@ def permitir_navegador(respuesta):
     respuesta.headers["Access-Control-Allow-Headers"] = "Content-Type"
     respuesta.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
     return respuesta
-
-MINUTOS_BLOQUEO = 15
-
-# Condicion SQL: la ocupacion "o" cruza las fechas pedidas y sigue vigente
-# (dos rangos se cruzan si uno empieza antes de que el otro termine)
-CRUCE_FECHAS = """
-    o.fecha_entrada < %s AND o.fecha_salida > %s
-    AND (o.tipo = 'confirmada' OR o.expira_en > NOW())
-"""
 
 
 # ---------------- FUNCIONES DE AYUDA ----------------
@@ -48,27 +36,12 @@ def limpiar(fila):
     return fila
 
 
-# Lee ?entrada=2026-12-20&salida=2026-12-23 (o del body) y las valida
-def leer_fechas(entrada, salida):
-    try:
-        entrada = date.fromisoformat(entrada)
-        salida = date.fromisoformat(salida)
-    except (TypeError, ValueError):
-        return None, None, "Fechas invalidas, use el formato AAAA-MM-DD"
-    if salida <= entrada:
-        return None, None, "La fecha de salida debe ser posterior a la de entrada"
-    if entrada < date.today():
-        return None, None, "La fecha de entrada no puede estar en el pasado"
-    return entrada, salida, None
-
-
 # Pregunta al servicio de Usuarios si el administrador existe
 # (con timeout y circuit breaker: si Usuarios falla o tarda, no se deja esperando al cliente)
 def validar_admin(admin_id):
-    tiempo_maximo = float(os.getenv("USUARIOS_TIMEOUT", "2"))
     try:
         with circuito_usuarios.calling():
-            respuesta = requests.get(f"{url_usuarios}/usuarios/{admin_id}", timeout=tiempo_maximo)
+            respuesta = requests.get(f"{url_usuarios}/usuarios/{admin_id}", timeout=TIEMPO_MAXIMO)
             if respuesta.status_code >= 500:
                 respuesta.raise_for_status()  # los 5xx cuentan como fallo del circuito
     except pybreaker.CircuitBreakerError:
@@ -87,19 +60,35 @@ def validar_admin(admin_id):
 
 
 # Estado del circuit breaker hacia Usuarios (CLOSED, OPEN o HALF-OPEN)
-@app.route("/circuito/usuarios")
+@app.route("/circuito")
 def estado_circuito():
-    return jsonify({
-        "estado": circuito_usuarios.current_state.upper(),
-        "fallos_consecutivos": circuito_usuarios.fail_counter,
-        "umbral_fallos": circuito_usuarios.fail_max,
-        "periodo_recuperacion": circuito_usuarios.reset_timeout
-    })
+    return jsonify({"usuarios": {
+            "estado": circuito_usuarios.current_state.upper(),
+            "fallos_consecutivos": circuito_usuarios.fail_counter,
+            "umbral_fallos": circuito_usuarios.fail_max,
+            "periodo_recuperacion": circuito_usuarios.reset_timeout
+        }})
+
+
+# Respuestas JSON para errores generales (ruta inexistente, metodo no permitido, error interno)
+@app.errorhandler(404)
+def no_encontrado(e):
+    return jsonify({"Mensaje": "Ruta no encontrada"}), 404
+
+
+@app.errorhandler(405)
+def metodo_no_permitido(e):
+    return jsonify({"Mensaje": "Metodo HTTP no permitido en esta ruta"}), 405
+
+
+@app.errorhandler(500)
+def error_interno(e):
+    return jsonify({"Mensaje": "Error interno del servicio"}), 500
 
 
 # ---------------- HOTELES ----------------
 
-# Listar hoteles activos (opcional: /hoteles?ciudad=Popayan). Con ?todos=1 incluye los inactivos (administrador)
+# Listar hoteles activos.
 @app.route("/hoteles")
 def listar_hoteles():
     ciudad = request.args.get("ciudad")
@@ -268,6 +257,29 @@ def crear_habitacion(hotel_id):
     return jsonify({"Mensaje": "Habitacion creada", "id": nuevo_id}), 201
 
 
+# Listar habitaciones activas de hoteles activos (lo usa el servicio de Disponibilidad)
+@app.route("/habitaciones")
+def listar_habitaciones():
+    ciudad = request.args.get("ciudad")
+    capacidad = request.args.get("capacidad", 1, type=int)
+    conexion = conectar()
+    cursor = conexion.cursor(dictionary=True)
+    sql = """
+        SELECT h.*, ho.nombre AS hotel, ho.ciudad
+        FROM habitaciones h
+        JOIN hoteles ho ON ho.id = h.hotel_id
+        WHERE ho.estado = 'activo' AND h.estado = 'activa'
+          AND h.capacidad >= %s
+          AND (%s IS NULL OR ho.ciudad = %s)
+        ORDER BY h.precio_noche
+    """
+    cursor.execute(sql, (capacidad, ciudad, ciudad))
+    habitaciones = [limpiar(h) for h in cursor.fetchall()]
+    cursor.close()
+    conexion.close()
+    return jsonify(habitaciones)
+
+
 # Detalle de una habitacion (lo usara el servicio de Reservas para conocer el precio)
 @app.route("/habitaciones/<int:id>")
 def buscar_habitacion(id):
@@ -333,266 +345,6 @@ def eliminar_habitacion(id):
         return jsonify({"Mensaje": "Habitacion no encontrada"}), 404
     return jsonify({"Mensaje": "Habitacion eliminada"})
 
-
-# ---------------- DISPONIBILIDAD ----------------
-
-# Buscar hoteles con habitaciones libres
-# /hoteles/disponibles?ciudad=Popayan&entrada=2026-12-20&salida=2026-12-23&huespedes=2
-@app.route("/hoteles/disponibles")
-def hoteles_disponibles():
-    entrada, salida, error = leer_fechas(request.args.get("entrada"), request.args.get("salida"))
-    if error:
-        return jsonify({"Mensaje": error}), 400
-    huespedes = request.args.get("huespedes", 1, type=int)
-    ciudad = request.args.get("ciudad")
-    noches = (salida - entrada).days
-
-    conexion = conectar()
-    cursor = conexion.cursor(dictionary=True)
-    sql = f"""
-        SELECT ho.id AS hotel_id, ho.nombre AS hotel, ho.ciudad,
-               h.id AS habitacion_id, h.numero, h.tipo, h.capacidad, h.precio_noche
-        FROM habitaciones h
-        JOIN hoteles ho ON ho.id = h.hotel_id
-        WHERE ho.estado = 'activo'
-          AND h.estado = 'activa'
-          AND h.capacidad >= %s
-          AND (%s IS NULL OR ho.ciudad = %s)
-          AND NOT EXISTS (
-              SELECT 1 FROM ocupaciones o
-              WHERE o.habitacion_id = h.id AND {CRUCE_FECHAS}
-          )
-        ORDER BY h.precio_noche
-    """
-    cursor.execute(sql, (huespedes, ciudad, ciudad, salida, entrada))
-    filas = cursor.fetchall()
-    cursor.close()
-    conexion.close()
-
-    # Agrupar las habitaciones por hotel
-    hoteles = {}
-    for fila in filas:
-        fila = limpiar(fila)
-        if fila["hotel_id"] not in hoteles:
-            hoteles[fila["hotel_id"]] = {
-                "hotel_id": fila["hotel_id"],
-                "hotel": fila["hotel"],
-                "ciudad": fila["ciudad"],
-                "habitaciones": []
-            }
-        hoteles[fila["hotel_id"]]["habitaciones"].append({
-            "habitacion_id": fila["habitacion_id"],
-            "numero": fila["numero"],
-            "tipo": fila["tipo"],
-            "capacidad": fila["capacidad"],
-            "precio_noche": fila["precio_noche"],
-            "precio_total": fila["precio_noche"] * noches
-        })
-
-    return jsonify({
-        "entrada": entrada.isoformat(),
-        "salida": salida.isoformat(),
-        "noches": noches,
-        "hoteles": list(hoteles.values())
-    })
-
-
-# Consultar si una habitacion esta libre
-# /habitaciones/1/disponibilidad?entrada=2026-12-20&salida=2026-12-23
-@app.route("/habitaciones/<int:id>/disponibilidad")
-def disponibilidad_habitacion(id):
-    entrada, salida, error = leer_fechas(request.args.get("entrada"), request.args.get("salida"))
-    if error:
-        return jsonify({"Mensaje": error}), 400
-
-    conexion = conectar()
-    cursor = conexion.cursor(dictionary=True)
-    cursor.execute("SELECT precio_noche, estado FROM habitaciones WHERE id = %s", (id,))
-    habitacion = cursor.fetchone()
-    if habitacion is None:
-        cursor.close()
-        conexion.close()
-        return jsonify({"Mensaje": "Habitacion no encontrada"}), 404
-    sql = f"""
-        SELECT COUNT(*) AS cruces FROM ocupaciones o
-        WHERE o.habitacion_id = %s AND {CRUCE_FECHAS}
-    """
-    cursor.execute(sql, (id, salida, entrada))
-    cruces = cursor.fetchone()["cruces"]
-    cursor.close()
-    conexion.close()
-
-    noches = (salida - entrada).days
-    return jsonify({
-        "habitacion_id": id,
-        "disponible": cruces == 0 and habitacion["estado"] == "activa",
-        "noches": noches,
-        "precio_total": float(habitacion["precio_noche"]) * noches
-    })
-
-
-# ---------------- OCUPACIONES (uso interno: servicio de Reservas) ----------------
-
-
-# Listar ocupaciones (opcional: /ocupaciones?habitacion_id=1)
-@app.route("/ocupaciones")
-def listar_ocupaciones():
-    habitacion_id = request.args.get("habitacion_id", type=int)
-    conexion = conectar()
-    cursor = conexion.cursor(dictionary=True)
-    if habitacion_id:
-        cursor.execute("SELECT * FROM ocupaciones WHERE habitacion_id = %s", (habitacion_id,))
-    else:
-        cursor.execute("SELECT * FROM ocupaciones")
-    ocupaciones = [limpiar(o) for o in cursor.fetchall()]
-    cursor.close()
-    conexion.close()
-    return jsonify(ocupaciones)
-
-
-# Buscar una ocupacion por id
-@app.route("/ocupaciones/<int:id>")
-def buscar_ocupacion(id):
-    conexion = conectar()
-    cursor = conexion.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM ocupaciones WHERE id = %s", (id,))
-    ocupacion = cursor.fetchone()
-    cursor.close()
-    conexion.close()
-    if ocupacion is None:
-        return jsonify({"Mensaje": "Ocupacion no encontrada"}), 404
-    return jsonify(limpiar(ocupacion))
-
-
-# Cambiar las fechas de una ocupacion
-# body: {"entrada": "2026-12-21", "salida": "2026-12-24"}
-@app.route("/ocupaciones/<int:id>", methods=["PUT"])
-def actualizar_ocupacion(id):
-    datos = request.json
-    entrada, salida, error = leer_fechas(datos.get("entrada"), datos.get("salida"))
-    if error:
-        return jsonify({"Mensaje": error}), 400
-
-    conexion = conectar()
-    cursor = conexion.cursor(dictionary=True)
-    cursor.execute("SELECT habitacion_id FROM ocupaciones WHERE id = %s", (id,))
-    ocupacion = cursor.fetchone()
-    if ocupacion is None:
-        cursor.close()
-        conexion.close()
-        return jsonify({"Mensaje": "Ocupacion no encontrada"}), 404
-
-    # Se revisan los cruces ignorando la propia ocupacion
-    sql = f"""
-        SELECT COUNT(*) AS cruces FROM ocupaciones o
-        WHERE o.habitacion_id = %s AND o.id <> %s AND {CRUCE_FECHAS}
-    """
-    cursor.execute(sql, (ocupacion["habitacion_id"], id, salida, entrada))
-    if cursor.fetchone()["cruces"] > 0:
-        cursor.close()
-        conexion.close()
-        return jsonify({"Mensaje": "La habitacion ya esta ocupada en esas fechas"}), 409
-
-    cursor.execute(
-        "UPDATE ocupaciones SET fecha_entrada = %s, fecha_salida = %s WHERE id = %s",
-        (entrada, salida, id)
-    )
-    conexion.commit()
-    cursor.close()
-    conexion.close()
-    return jsonify({"Mensaje": "Ocupacion actualizada"})
-
-
-# Bloquear una habitacion por unas fechas durante 15 minutos
-# body: {"habitacion_id": 1, "entrada": "2026-12-20", "salida": "2026-12-23"}
-@app.route("/ocupaciones", methods=["POST"])
-def bloquear():
-    datos = request.json
-    entrada, salida, error = leer_fechas(datos.get("entrada"), datos.get("salida"))
-    if error:
-        return jsonify({"Mensaje": error}), 400
-    habitacion_id = datos.get("habitacion_id")
-
-    conexion = conectar()
-    cursor = conexion.cursor(dictionary=True)
-    conexion.start_transaction()
-
-    # FOR UPDATE: si dos personas reservan la misma habitacion al mismo tiempo,
-    # la segunda espera a que la primera termine (asi no hay reservas duplicadas)
-    cursor.execute(
-        "SELECT id, estado FROM habitaciones WHERE id = %s FOR UPDATE",
-        (habitacion_id,)
-    )
-    habitacion = cursor.fetchone()
-    if habitacion is None or habitacion["estado"] != "activa":
-        conexion.rollback()
-        cursor.close()
-        conexion.close()
-        return jsonify({"Mensaje": "Habitacion no encontrada o no disponible"}), 404
-
-    sql = f"""
-        SELECT COUNT(*) AS cruces FROM ocupaciones o
-        WHERE o.habitacion_id = %s AND {CRUCE_FECHAS}
-    """
-    cursor.execute(sql, (habitacion_id, salida, entrada))
-    if cursor.fetchone()["cruces"] > 0:
-        conexion.rollback()
-        cursor.close()
-        conexion.close()
-        return jsonify({"Mensaje": "La habitacion ya esta ocupada en esas fechas"}), 409
-
-    sql = f"""
-        INSERT INTO ocupaciones
-        (habitacion_id, fecha_entrada, fecha_salida, tipo, expira_en)
-        VALUES (%s, %s, %s, 'bloqueo', NOW() + INTERVAL {MINUTOS_BLOQUEO} MINUTE)
-    """
-    cursor.execute(sql, (habitacion_id, entrada, salida))
-    conexion.commit()
-    nuevo_id = cursor.lastrowid
-    cursor.close()
-    conexion.close()
-    return jsonify({
-        "Mensaje": "Habitacion bloqueada",
-        "ocupacion_id": nuevo_id,
-        "minutos_para_confirmar": MINUTOS_BLOQUEO
-    }), 201
-
-
-# Confirmar un bloqueo (cuando la reserva queda confirmada)
-# body: {"reserva_id": 10}
-@app.route("/ocupaciones/<int:id>/confirmar", methods=["POST"])
-def confirmar(id):
-    reserva_id = (request.json or {}).get("reserva_id")
-    conexion = conectar()
-    cursor = conexion.cursor(dictionary=True)
-    sql = """
-        UPDATE ocupaciones
-        SET tipo = 'confirmada', reserva_id = %s, expira_en = NULL
-        WHERE id = %s AND tipo = 'bloqueo' AND expira_en > NOW()
-    """
-    cursor.execute(sql, (reserva_id, id))
-    conexion.commit()
-    filas_afectadas = cursor.rowcount
-    cursor.close()
-    conexion.close()
-    if filas_afectadas == 0:
-        return jsonify({"Mensaje": "Bloqueo no encontrado o vencido"}), 404
-    return jsonify({"Mensaje": "Ocupacion confirmada"})
-
-
-# Liberar fechas (reserva cancelada o pago rechazado)
-@app.route("/ocupaciones/<int:id>", methods=["DELETE"])
-def liberar(id):
-    conexion = conectar()
-    cursor = conexion.cursor(dictionary=True)
-    cursor.execute("DELETE FROM ocupaciones WHERE id = %s", (id,))
-    conexion.commit()
-    filas_afectadas = cursor.rowcount
-    cursor.close()
-    conexion.close()
-    if filas_afectadas == 0:
-        return jsonify({"Mensaje": "Ocupacion no encontrada"}), 404
-    return jsonify({"Mensaje": "Fechas liberadas"})
 
 
 app.run(host="0.0.0.0", port=5000)

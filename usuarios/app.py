@@ -1,4 +1,5 @@
 from flask import Flask, jsonify, request
+import time
 from werkzeug.security import generate_password_hash, check_password_hash
 import mysql.connector
 from database import conectar
@@ -7,6 +8,22 @@ app = Flask(__name__)
 
 
 # Permite que la pagina (otro puerto) llame a este servicio desde el navegador
+# Respuestas JSON para errores generales (ruta inexistente, metodo no permitido, error interno)
+@app.errorhandler(404)
+def no_encontrado(e):
+    return jsonify({"Mensaje": "Ruta no encontrada"}), 404
+
+
+@app.errorhandler(405)
+def metodo_no_permitido(e):
+    return jsonify({"Mensaje": "Metodo HTTP no permitido en esta ruta"}), 405
+
+
+@app.errorhandler(500)
+def error_interno(e):
+    return jsonify({"Mensaje": "Error interno del servicio"}), 500
+
+
 @app.after_request
 def permitir_navegador(respuesta):
     respuesta.headers["Access-Control-Allow-Origin"] = "*"

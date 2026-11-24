@@ -1,7 +1,5 @@
-// Direcciones de los servicios (los puertos que publica el docker-compose)
-const API_USUARIOS = `http://${location.hostname}:5001`;
-const API_ESPACIOS = `http://${location.hostname}:5002`;
-const API_RESERVAS = `http://${location.hostname}:5003`;
+// Todas las peticiones pasan por el API Gateway (puerto 5000), que las reenvia al servicio que corresponde
+const API_GATEWAY = `http://${location.hostname}:5000`;
 const TIEMPO_MAXIMO_MS = 5000;
 
 const $ = (id) => document.getElementById(id);
@@ -92,7 +90,7 @@ function errorAuth(id, texto) {
 }
 
 async function iniciarSesion(correo, password) {
-  const r = await api(API_USUARIOS, "/login", { method: "POST", body: { correo, password } });
+  const r = await api(API_GATEWAY, "/login", { method: "POST", body: { correo, password } });
   if (r.ok) guardarSesion(r.datos.usuario);
   return r;
 }
@@ -116,7 +114,7 @@ async function enviarRegistro(evento) {
   evento.preventDefault();
   const correo = $("g-correo").value.trim();
   const password = $("g-password").value;
-  const creado = await api(API_USUARIOS, "/usuarios", {
+  const creado = await api(API_GATEWAY, "/usuarios", {
     method: "POST",
     body: {
       nombre: $("g-nombre").value.trim(),
@@ -137,7 +135,7 @@ async function enviarRegistro(evento) {
 
 async function cargarHoteles() {
   const lista = $("lista-hoteles");
-  const r = await api(API_ESPACIOS, "/hoteles");
+  const r = await api(API_GATEWAY, "/hoteles");
   if (!r.ok) {
     lista.innerHTML = `<p class="vacio">No pudimos cargar los hoteles. ${esc(mensajeDe(r))}.</p>`;
     return;
@@ -154,7 +152,7 @@ async function cargarHoteles() {
   }
 
   // Precio "desde" de cada hotel (consulta sus habitaciones)
-  const detalles = await Promise.all(r.datos.map((h) => api(API_ESPACIOS, `/hoteles/${h.id}`)));
+  const detalles = await Promise.all(r.datos.map((h) => api(API_GATEWAY, `/hoteles/${h.id}`)));
   lista.innerHTML = r.datos.map((h, i) => {
     const habitaciones = detalles[i].ok ? detalles[i].datos.habitaciones.filter((x) => x.estado === "activa") : [];
     const desde = habitaciones.length ? Math.min(...habitaciones.map((x) => x.precio_noche)) : null;
@@ -188,7 +186,7 @@ async function buscar(evento) {
   if (ciudad) params.set("ciudad", ciudad);
 
   mostrarResultados(`<p class="vacio">Buscando habitaciones…</p>`, "Habitaciones libres");
-  const r = await api(API_ESPACIOS, `/hoteles/disponibles?${params}`);
+  const r = await api(API_GATEWAY, `/disponibilidad/hoteles?${params}`);
   if (!r.ok) {
     mostrarResultados(`<p class="vacio error-texto">${esc(mensajeDe(r))}</p>`, "Habitaciones libres");
     return;
@@ -275,7 +273,7 @@ async function apartar(evento) {
   boton.textContent = "Apartando…";
   $("error-datos").hidden = true;
 
-  const r = await api(API_RESERVAS, "/reservas", {
+  const r = await api(API_GATEWAY, "/reservas", {
     method: "POST",
     body: {
       usuario_id: sesion.id,
@@ -336,7 +334,7 @@ function fallo(titulo, texto) {
 async function confirmar() {
   const boton = $("btn-confirmar");
   boton.disabled = true;
-  const r = await api(API_RESERVAS, `/reservas/${reserva.id}/confirmar`, { method: "POST" });
+  const r = await api(API_GATEWAY, `/reservas/${reserva.id}/confirmar`, { method: "POST" });
   if (!r.ok) {
     if (r.estado === 409 || r.estado === 404) return fallo("Reserva vencida", mensajeDe(r));
     $("error-confirmar").textContent = mensajeDe(r);
@@ -352,7 +350,7 @@ async function confirmar() {
 
 async function liberar() {
   detenerReloj();
-  await api(API_RESERVAS, `/reservas/${reserva.id}/cancelar`, { method: "POST" });
+  await api(API_GATEWAY, `/reservas/${reserva.id}/cancelar`, { method: "POST" });
   irAPaso("paso-fallo");
   dlgReserva.close();
 }
@@ -368,7 +366,7 @@ async function pintarMisReservas() {
     return;
   }
   cont.innerHTML = `<p class="vacio">Cargando…</p>`;
-  const r = await api(API_RESERVAS, `/reservas?usuario_id=${sesion.id}`);
+  const r = await api(API_GATEWAY, `/reservas?usuario_id=${sesion.id}`);
   if (!r.ok) {
     cont.innerHTML = `<p class="vacio error-texto">${esc(mensajeDe(r))}.</p>`;
     return;
@@ -388,7 +386,7 @@ async function pintarMisReservas() {
 }
 
 async function cancelarReserva(id) {
-  const r = await api(API_RESERVAS, `/reservas/${id}/cancelar`, { method: "POST" });
+  const r = await api(API_GATEWAY, `/reservas/${id}/cancelar`, { method: "POST" });
   if (!r.ok && r.estado !== 409) {
     alert(`No se pudo cancelar: ${mensajeDe(r)}`);
     return;
@@ -405,22 +403,20 @@ function chip(id, texto, nivel) {
 }
 
 async function revisarServicios() {
-  const [usuarios, espacios, reservas, cEspacios, cReservas] = await Promise.all([
-    api(API_USUARIOS, "/usuarios"),
-    api(API_ESPACIOS, "/hoteles"),
-    api(API_RESERVAS, "/reservas?usuario_id=0"),
-    api(API_ESPACIOS, "/circuito/usuarios"),
-    api(API_RESERVAS, "/circuito")
+  const [salud, ...circuitos] = await Promise.all([
+    api(API_GATEWAY, "/salud"),
+    api(API_GATEWAY, "/circuito/espacios"),
+    api(API_GATEWAY, "/circuito/disponibilidad"),
+    api(API_GATEWAY, "/circuito/reservas")
   ]);
-  const linea = (nombre, r) => chip(`chip-${nombre}`, `${nombre[0].toUpperCase() + nombre.slice(1)}: ${r.ok ? "en línea" : "sin respuesta"}`, r.ok ? "bien" : "mal");
-  linea("usuarios", usuarios);
-  linea("espacios", espacios);
-  linea("reservas", reservas);
+  for (const nombre of ["usuarios", "espacios", "disponibilidad", "reservas"]) {
+    const estado = salud.ok ? salud.datos[nombre] : "sin respuesta del gateway";
+    const titulo = nombre[0].toUpperCase() + nombre.slice(1);
+    chip(`chip-${nombre}`, `${titulo}: ${estado}`, estado === "en linea" ? "bien" : "mal");
+  }
 
   // Estado de todos los circuit breakers: si alguno está abierto, se muestra
-  const estados = [];
-  if (cEspacios.ok) estados.push(cEspacios.datos.estado);
-  if (cReservas.ok) estados.push(...Object.values(cReservas.datos).map((c) => c.estado));
+  const estados = circuitos.filter((c) => c.ok).flatMap((c) => Object.values(c.datos).map((x) => x.estado));
   if (estados.length === 0) return chip("chip-circuito", "Circuitos: sin datos", "mal");
   if (estados.includes("OPEN")) return chip("chip-circuito", "Circuitos: hay uno abierto", "mal");
   if (estados.includes("HALF-OPEN")) return chip("chip-circuito", "Circuitos: probando recuperación", "medio");
@@ -479,7 +475,7 @@ function iniciar() {
   // Si cierran la ventana con una habitación apartada, se cancela para no bloquearla 15 minutos
   dlgReserva.addEventListener("close", () => {
     if (!$("paso-confirmar").hidden && reserva?.id) {
-      api(API_RESERVAS, `/reservas/${reserva.id}/cancelar`, { method: "POST" });
+      api(API_GATEWAY, `/reservas/${reserva.id}/cancelar`, { method: "POST" });
     }
     detenerReloj();
   });
